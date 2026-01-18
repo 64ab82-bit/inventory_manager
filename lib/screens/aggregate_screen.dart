@@ -27,7 +27,6 @@ class _AggregateScreenState extends State<AggregateScreen> {
   }
 
   Future<void> _loadLatestData() async {
-    print('=== Loading latest data from GitHub ===');
     await loadData();
     _compute();
     setState(() {});

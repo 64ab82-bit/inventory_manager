@@ -21,7 +21,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   Future<void> _loadLatestData() async {
-    print('=== Loading latest data from GitHub ===');
     await loadData();
     setState(() {});
   }

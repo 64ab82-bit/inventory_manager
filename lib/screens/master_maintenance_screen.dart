@@ -17,7 +17,6 @@ class _MasterMaintenanceScreenState extends State<MasterMaintenanceScreen> {
   }
 
   Future<void> _loadLatestData() async {
-    print('=== Loading latest data from GitHub ===');
     await loadData();
     setState(() {});
   }

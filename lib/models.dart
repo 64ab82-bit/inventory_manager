@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math' show min;
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:csv/csv.dart';
@@ -97,7 +96,6 @@ Future<void> loadData() async {
   try {
     if (isGitHubConfigured() && _githubClient != null) {
       // GitHubから読み込み（GitHub設定がある場合は必須）
-      print('=== GitHub Load Start ===');
       final repoSlug = github.RepositorySlug(_githubUser!, _githubRepo!);
       
       try {
@@ -105,46 +103,39 @@ Future<void> loadData() async {
 
         if (file.file != null) {
           // GitHub APIのcontentはBase64エンコードされているのでデコード
-          final encodedContent = file.file!.content ?? '';
-          print('Loaded from GitHub - encoded content length: ${encodedContent.length}');
+          // 注：GitHub APIの content には改行が含まれているので削除する
+          final encodedContent = (file.file!.content ?? '').replaceAll('\n', '').replaceAll('\r', '');
           
           final decodedBytes = base64Decode(encodedContent);
           final jsonString = utf8.decode(decodedBytes);
-          final preview = jsonString.substring(0, min(100, jsonString.length));
-          print('Decoded JSON string: $preview...');
           
           _parseJSON(jsonString);
-          print('✅ Successfully loaded from GitHub');
           return;
         }
       } catch (e) {
         final errorMsg = 'GitHub読み込みエラー: $e';
-        print('❌ $errorMsg');
         _gitHubLoadError = errorMsg;
         rethrow; // GitHub設定がある場合は、エラーを上げる
       }
     }
   } catch (e) {
-    print('GitHub load error: $e');
+    // GitHub load error は無視してローカルにフォールバック
   }
 
   // GitHub設定がない場合のみ、ローカルから読み込み
   try {
-    print('Loading from local storage...');
     final prefs = await SharedPreferences.getInstance();
     String? jsonString = prefs.getString('app_data_json');
 
     if (jsonString == null) {
       // 初期データはCSVから読み込み
-      print('Loading from CSV...');
       final csvString = await rootBundle.loadString('assets/data.csv');
       jsonString = _csvToJson(csvString);
     }
 
     _parseJSON(jsonString);
-    print('✅ Successfully loaded from local storage');
   } catch (e) {
-    print('❌ Local load error: $e');
+    // ローカル読み込みエラー（エラー処理不要）
   }
 }
 
@@ -211,8 +202,6 @@ Future<void> saveData() async {
 
   // GitHubに保存
   if (isGitHubConfigured() && _githubClient != null) {
-    print('=== GitHub Save Start ===');
-    print('User: $_githubUser, Repo: $_githubRepo');
     try {
       final repoSlug = github.RepositorySlug(_githubUser!, _githubRepo!);
       final filePath = 'inventory_data.json';
@@ -221,7 +210,6 @@ Future<void> saveData() async {
       final url = Uri.parse(
         'https://api.github.com/repos/$_githubUser/$_githubRepo/contents/$filePath',
       );
-      print('URL: $url');
 
       // 既存ファイルの情報を取得
       String? sha;
@@ -229,10 +217,9 @@ Future<void> saveData() async {
         final existingFile = await _githubClient!.repositories.getContents(repoSlug, filePath);
         if (existingFile.file != null) {
           sha = existingFile.file!.sha;
-          print('Found existing file, SHA: $sha');
         }
       } catch (e) {
-        print('File does not exist yet: $e');
+        // ファイルが存在しない場合は新規作成
       }
 
       final body = {
@@ -243,9 +230,6 @@ Future<void> saveData() async {
       if (sha != null) {
         body['sha'] = sha;
       }
-
-      print('Sending PUT request...');
-      print('Headers: Authorization: token ${_githubToken?.substring(0, 10)}***');
       
       final response = await http.put(
         url,
@@ -256,25 +240,12 @@ Future<void> saveData() async {
         body: jsonEncode(body),
       );
 
-      print('Response Status: ${response.statusCode}');
-      final bodyPreview = response.body.length > 200 
-        ? response.body.substring(0, 200) 
-        : response.body;
-      print('Response Body: $bodyPreview');
-
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        print('✅ GitHub save successful!');
-      } else {
-        print('❌ GitHub save failed: ${response.statusCode}');
-        print('Full response: ${response.body}');
+      if (response.statusCode != 201 && response.statusCode != 200) {
+        print('GitHub save failed: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      print('❌ GitHub save error: $e');
-      print(e);
+      print('GitHub save error: $e');
     }
-    print('=== GitHub Save End ===');
-  } else {
-    print('⚠️  GitHub not configured - saving to local only');
   }
 
   // ローカルにも保存
