@@ -29,6 +29,7 @@ class _MasterMaintenanceScreenState extends State<MasterMaintenanceScreen> {
                   item.name = name;
                 }
               });
+              await saveData();
               Navigator.of(context).pop();
             },
             child: const Text('保存'),
@@ -51,7 +52,7 @@ class _MasterMaintenanceScreenState extends State<MasterMaintenanceScreen> {
               setState(() {
                 masterItems.removeWhere((e) => e.id == item.id);
                 // 在庫データに影響が出るが、ここではそのまま残す（要件通り起動中保持）
-              });              Navigator.of(context).pop();
+              });              await saveData();              Navigator.of(context).pop();
             },
             child: const Text('削除'),
           ),
