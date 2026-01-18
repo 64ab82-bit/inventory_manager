@@ -54,10 +54,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final now = DateTime.now();
     final entryDate = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, now.hour, now.minute, now.second);
     final itemName = masterItems.firstWhere((e) => e.id == _selectedItemId).name;
+    
+    print('📝 [在庫登録] 保存前の在庫データ件数: ${inventoryEntries.length}');
     inventoryEntries.add(InventoryEntry(date: entryDate, itemId: _selectedItemId!, itemName: itemName, quantity: q));
+    print('📝 [在庫登録] 保存後の在庫データ件数: ${inventoryEntries.length}');
+    
     await saveData();
+    print('✅ [在庫登録] saveData完了');
+    
     // 保存後、GitHub から最新データを再取得
     await _loadLatestData();
+    print('✅ [在庫登録] _loadLatestData完了 - 在庫データ件数: ${inventoryEntries.length}');
+    
     _qtyController.clear();
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('在庫を登録しました')));
   }
