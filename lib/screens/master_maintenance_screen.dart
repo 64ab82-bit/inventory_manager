@@ -9,6 +9,19 @@ class MasterMaintenanceScreen extends StatefulWidget {
 }
 
 class _MasterMaintenanceScreenState extends State<MasterMaintenanceScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // 画面表示時に GitHub から最新データを取得
+    _loadLatestData();
+  }
+
+  Future<void> _loadLatestData() async {
+    print('=== Loading latest data from GitHub ===');
+    await loadData();
+    setState(() {});
+  }
+
   void _showEditDialog({Item? item}) {
     final TextEditingController c = TextEditingController(text: item?.name ?? '');
     showDialog(

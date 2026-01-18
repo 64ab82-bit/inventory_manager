@@ -72,49 +72,67 @@ bool isGitHubConfigured() => _githubToken != null && _githubUser != null && _git
 
 int getNextItemId() => _nextItemId++;
 
+// GitHub読み込みエラーメッセージ
+String? _gitHubLoadError;
+String? getGitHubLoadError() => _gitHubLoadError;
+void clearGitHubLoadError() => _gitHubLoadError = null;
+
 // データ読み込み関数
 Future<void> loadData() async {
   await initializeGitHubConfig();
+  _gitHubLoadError = null;
 
   try {
     if (isGitHubConfigured() && _githubClient != null) {
-      // GitHubから読み込み
+      // GitHubから読み込み（GitHub設定がある場合は必須）
+      print('=== GitHub Load Start ===');
       final repoSlug = github.RepositorySlug(_githubUser!, _githubRepo!);
-      final file = await _githubClient!.repositories.getContents(repoSlug, 'inventory_data.json');
+      
+      try {
+        final file = await _githubClient!.repositories.getContents(repoSlug, 'inventory_data.json');
 
-      if (file.file != null) {
-        // GitHub APIのcontentはBase64エンコードされているのでデコード
-        final encodedContent = file.file!.content ?? '';
-        print('Loaded from GitHub - encoded content length: ${encodedContent.length}');
-        
-        final decodedBytes = base64Decode(encodedContent);
-        final jsonString = utf8.decode(decodedBytes);
-        final preview = jsonString.substring(0, min(100, jsonString.length));
-        print('Decoded JSON string: $preview...');
-        
-        _parseJSON(jsonString);
-        print('✅ Successfully loaded from GitHub');
-        return;
+        if (file.file != null) {
+          // GitHub APIのcontentはBase64エンコードされているのでデコード
+          final encodedContent = file.file!.content ?? '';
+          print('Loaded from GitHub - encoded content length: ${encodedContent.length}');
+          
+          final decodedBytes = base64Decode(encodedContent);
+          final jsonString = utf8.decode(decodedBytes);
+          final preview = jsonString.substring(0, min(100, jsonString.length));
+          print('Decoded JSON string: $preview...');
+          
+          _parseJSON(jsonString);
+          print('✅ Successfully loaded from GitHub');
+          return;
+        }
+      } catch (e) {
+        final errorMsg = 'GitHub読み込みエラー: $e';
+        print('❌ $errorMsg');
+        _gitHubLoadError = errorMsg;
+        rethrow; // GitHub設定がある場合は、エラーを上げる
       }
     }
   } catch (e) {
-    print('❌ GitHub load error: $e');
+    print('GitHub load error: $e');
   }
 
-  // GitHubが使えない場合、ローカルから読み込み
+  // GitHub設定がない場合のみ、ローカルから読み込み
   try {
+    print('Loading from local storage...');
     final prefs = await SharedPreferences.getInstance();
     String? jsonString = prefs.getString('app_data_json');
 
     if (jsonString == null) {
       // 初期データはCSVから読み込み
+      print('Loading from CSV...');
       final csvString = await rootBundle.loadString('assets/data.csv');
       jsonString = _csvToJson(csvString);
     }
 
     _parseJSON(jsonString);
+    print('✅ Successfully loaded from local storage');
   } catch (e) {
-    print('Local load error: $e');
+    print('❌ Local load error: $e');
   }
 }
 

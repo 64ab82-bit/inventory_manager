@@ -22,7 +22,15 @@ class _AggregateScreenState extends State<AggregateScreen> {
     super.initState();
     _end = widget.initialEnd ?? DateTime.now();
     _start = widget.initialStart ?? DateTime.now().subtract(const Duration(days: 7));
+    // 画面表示時に GitHub から最新データを取得
+    _loadLatestData();
+  }
+
+  Future<void> _loadLatestData() async {
+    print('=== Loading latest data from GitHub ===');
+    await loadData();
     _compute();
+    setState(() {});
   }
 
   void _pickStart() async {

@@ -32,6 +32,34 @@ class _MenuScreenState extends State<MenuScreen> {
           ),
         );
       });
+    } else {
+      // GitHub設定がある場合、読み込みエラーを確認
+      final errorMsg = getGitHubLoadError();
+      if (errorMsg != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('⚠️ GitHub読み込みエラー'),
+              content: Text(errorMsg),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('閉じる'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    clearGitHubLoadError();
+                    Navigator.pop(context);
+                    _showGitHubSetup();
+                  },
+                  child: const Text('設定を変更'),
+                ),
+              ],
+            ),
+          );
+        });
+      }
     }
   }
 

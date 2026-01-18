@@ -13,6 +13,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
   int? _selectedItemId;
   final TextEditingController _qtyController = TextEditingController();
 
+  @override
+  void initState() {
+    super.initState();
+    // 画面表示時に GitHub から最新データを取得
+    _loadLatestData();
+  }
+
+  Future<void> _loadLatestData() async {
+    print('=== Loading latest data from GitHub ===');
+    await loadData();
+    setState(() {});
+  }
+
   String _fmt(DateTime dt) {
     final d = dt.toLocal();
     String two(int v) => v.toString().padLeft(2, '0');
