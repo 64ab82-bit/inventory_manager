@@ -19,14 +19,16 @@ class InventoryEntry {
   final int itemId;
   final String itemName;
   final int quantity;
-  InventoryEntry({required this.date, required this.itemId, required this.itemName, required this.quantity});
+  final String? remarks;  // 備考フィールドを追加
+  InventoryEntry({required this.date, required this.itemId, required this.itemName, required this.quantity, this.remarks});
 
-  Map<String, dynamic> toJson() => {'date': date.toIso8601String(), 'itemId': itemId, 'itemName': itemName, 'quantity': quantity};
+  Map<String, dynamic> toJson() => {'date': date.toIso8601String(), 'itemId': itemId, 'itemName': itemName, 'quantity': quantity, 'remarks': remarks};
   factory InventoryEntry.fromJson(Map<String, dynamic> json) => InventoryEntry(
         date: DateTime.parse(json['date']),
         itemId: json['itemId'],
         itemName: json['itemName'],
         quantity: json['quantity'],
+        remarks: json['remarks'],
       );
 }
 
