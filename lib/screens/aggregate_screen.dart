@@ -17,6 +17,8 @@ class _AggregateScreenState extends State<AggregateScreen> {
   Map<int, int> _totals = {};
   ReportMode _mode = ReportMode.aggregate;
   List<InventoryEntry> _filteredEntries = [];
+  int? _selectedItemId; // null = すべての項目
+  
   @override
   void initState() {
     super.initState();
@@ -76,7 +78,20 @@ class _AggregateScreenState extends State<AggregateScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final rows = _totals.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    // 履歴から使われているアイテムIDを取得
+    final usedItemIds = _filteredEntries.map((e) => e.itemId).toSet().toList();
+    final availableItems = masterItems.where((item) => usedItemIds.contains(item.id)).toList();
+    
+    // 選択されたアイテムでフィルタリング
+    final filteredRows = _totals.entries.where((r) {
+      if (_selectedItemId == null) return true;
+      return r.key == _selectedItemId;
+    }).toList()..sort((a, b) => b.value.compareTo(a.value));
+    
+    final filteredHistoryEntries = _filteredEntries.where((e) {
+      if (_selectedItemId == null) return true;
+      return e.itemId == _selectedItemId;
+    }).toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('集計')),
@@ -106,6 +121,28 @@ class _AggregateScreenState extends State<AggregateScreen> {
               ),
             ]),
             const SizedBox(height: 12),
+            DropdownButtonFormField<int?>(
+              value: _selectedItemId,
+              decoration: const InputDecoration(
+                labelText: 'アイテムで絞り込み',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.filter_list),
+              ),
+              items: [
+                const DropdownMenuItem<int?>(
+                  value: null,
+                  child: Text('すべての項目'),
+                ),
+                ...availableItems.map((item) => DropdownMenuItem<int?>(
+                  value: item.id,
+                  child: Text(item.name),
+                )),
+              ],
+              onChanged: (value) {
+                setState(() => _selectedItemId = value);
+              },
+            ),
+            const SizedBox(height: 12),
             Row(children: [
               Expanded(child: ElevatedButton.icon(onPressed: () { _compute(); setState(() => _mode = ReportMode.aggregate); }, icon: const Icon(Icons.bar_chart), label: const Text('集計実行'))),
               const SizedBox(width: 8),
@@ -114,10 +151,10 @@ class _AggregateScreenState extends State<AggregateScreen> {
             const SizedBox(height: 12),
             Expanded(
               child: _mode == ReportMode.aggregate
-                  ? (rows.isEmpty
+                  ? (filteredRows.isEmpty
                       ? const Center(child: Text('該当データがありません'))
                       : ListView(
-                          children: rows.map((r) {
+                          children: filteredRows.map((r) {
                             final name = masterItems.firstWhere((m) => m.id == r.key, orElse: () => Item(id: r.key, name: '不明')).name;
                             return Card(
                               margin: const EdgeInsets.symmetric(vertical: 6),
@@ -129,12 +166,12 @@ class _AggregateScreenState extends State<AggregateScreen> {
                             );
                           }).toList(),
                         ))
-                  : (_filteredEntries.isEmpty
+                  : (filteredHistoryEntries.isEmpty
                       ? const Center(child: Text('該当データがありません'))
                       : ListView.builder(
-                          itemCount: _filteredEntries.length,
+                          itemCount: filteredHistoryEntries.length,
                           itemBuilder: (context, idx) {
-                            final e = _filteredEntries[idx];
+                            final e = filteredHistoryEntries[idx];
                             final name = masterItems.firstWhere((m) => m.id == e.itemId, orElse: () => Item(id: e.itemId, name: '不明')).name;
                             return Card(
                               margin: const EdgeInsets.symmetric(vertical: 6),
