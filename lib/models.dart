@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:csv/csv.dart';
 import 'package:github/github.dart' as github;
+import 'package:http/http.dart' as http;
 
 class Item {
   final int id;
@@ -172,15 +173,48 @@ Future<void> saveData() async {
   if (isGitHubConfigured() && _githubClient != null) {
     try {
       final repoSlug = github.RepositorySlug(_githubUser!, _githubRepo!);
+      final filePath = 'inventory_data.json';
 
-      // ファイルを作成または更新
-      await _githubClient!.repositories.createFile(
-        repoSlug,
-        github.CreateFile(
-          message: 'Update inventory data',
-          content: base64Encode(utf8.encode(jsonString)),
-        ),
+      // GitHubにファイルを保存（PUT リクエストを使用）
+      // 注: github パッケージは高レベルAPIなため、直接HTTPで対応
+      final url = Uri.parse(
+        'https://api.github.com/repos/$_githubUser/$_githubRepo/contents/$filePath',
       );
+
+      // 既存ファイルの情報を取得
+      String? sha;
+      try {
+        final existingFile = await _githubClient!.repositories.getContents(repoSlug, filePath);
+        if (existingFile.file != null) {
+          sha = existingFile.file!.sha;
+        }
+      } catch (e) {
+        print('File does not exist yet: $e');
+      }
+
+      final body = {
+        'message': sha != null ? 'Update inventory data' : 'Initial inventory data',
+        'content': base64Encode(utf8.encode(jsonString)).toString(),
+      };
+
+      if (sha != null) {
+        body['sha'] = sha;
+      }
+
+      final response = await http.put(
+        url,
+        headers: {
+          'Authorization': 'token $_githubToken',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      );
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        print('GitHub save successful: ${response.statusCode}');
+      } else {
+        print('GitHub save failed: ${response.statusCode} - ${response.body}');
+      }
     } catch (e) {
       print('GitHub save error: $e');
     }
