@@ -6,7 +6,7 @@ import 'package:inventory_manager/screens/aggregate_screen.dart';
 import 'package:inventory_manager/models.dart';
 
 class MenuScreen extends StatefulWidget {
-  const MenuScreen({Key? key}) : super(key: key);
+  const MenuScreen({super.key});
 
   @override
   State<MenuScreen> createState() => _MenuScreenState();
@@ -76,7 +76,7 @@ class _MenuScreenState extends State<MenuScreen> {
   void _showGitHubSetup() {
     _selectedRepo = null;
     _availableRepos = [];
-    bool _obscureToken = true;
+    bool obscureToken = true;
     
     showDialog(
       context: context,
@@ -95,7 +95,7 @@ class _MenuScreenState extends State<MenuScreen> {
                   // トークン入力（ペースト対応 + 表示/非表示）
                   TextField(
                     controller: _tokenController,
-                    obscureText: _obscureToken,
+                    obscureText: obscureToken,
                     onChanged: (_) => setDialogState(() {}),
                     decoration: InputDecoration(
                       labelText: 'Personal Access Token',
@@ -105,10 +105,10 @@ class _MenuScreenState extends State<MenuScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           IconButton(
-                            icon: Icon(_obscureToken ? Icons.visibility : Icons.visibility_off),
-                            tooltip: _obscureToken ? '表示' : '非表示',
+                            icon: Icon(obscureToken ? Icons.visibility : Icons.visibility_off),
+                            tooltip: obscureToken ? '表示' : '非表示',
                             onPressed: () {
-                              setDialogState(() => _obscureToken = !_obscureToken);
+                              setDialogState(() => obscureToken = !obscureToken);
                             },
                           ),
                           IconButton(
@@ -193,7 +193,7 @@ class _MenuScreenState extends State<MenuScreen> {
                       ),
                       items: _availableRepos.map((repo) => DropdownMenuItem(value: repo, child: Text(repo))).toList(),
                       onChanged: (value) => setDialogState(() => _selectedRepo = value),
-                      value: _selectedRepo,
+                      initialValue: _selectedRepo,
                     )
                   else if (_loadingRepos)
                     const Padding(
