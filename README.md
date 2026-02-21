@@ -15,10 +15,9 @@ For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
 
-## Inventory API (JSON -> SQLite)
+## Inventory API (PostgreSQL)
 
-`master_data.json` と `inventory_entries.json` の内容を SQLite に移行し、
-HTTP API で参照・登録できるバックエンドを `backend/` に追加しています。
+PostgreSQLに保存し、HTTP API で参照・登録できるバックエンドを `backend/` に追加しています。
 
 ### 起動手順
 
@@ -28,10 +27,10 @@ HTTP API で参照・登録できるバックエンドを `backend/` に追加�
 
 起動後: `http://127.0.0.1:8080`
 
-### DBファイル
+### DB接続
 
-- `backend/inventory.db`
-- 初回起動時のみ、JSONファイルから自動投入します（既存データがある場合は投入しません）
+- `DATABASE_URL` が必須です（PostgreSQLのみ対応）
+- 初回起動時のみ、`master_data.json` / `inventory_entries.json` から自動投入します（既存データがある場合は投入しません）
 
 ### API
 
@@ -52,6 +51,7 @@ Flutterアプリの `loadData()/saveData()` はこのAPIを利用するように
 
 - `HOST` (デフォルト: `0.0.0.0`)
 - `PORT` (デフォルト: `8080`)
+- `DATABASE_URL` (必須: PostgreSQL接続文字列)
 - `API_KEY` (任意: 設定すると `/health` 以外に `X-Api-Key` が必須)
 - `CORS_ALLOWED_ORIGINS` (任意: `https://a.com,https://b.com` のように指定)
 
@@ -61,7 +61,7 @@ Flutterアプリの `loadData()/saveData()` はこのAPIを利用するように
 
 1. `backend/` をデプロイ対象にする
 2. Start Command を `dart run bin/server.dart` に設定
-3. Environment Variables に `PORT`, `API_KEY`, `CORS_ALLOWED_ORIGINS` を設定
+3. Environment Variables に `DATABASE_URL`, `API_KEY`, `CORS_ALLOWED_ORIGINS` を設定
 4. Flutter側の設定画面で API URL を公開URLに変更
 
 ### Flutter側設定（公開URLに接続）
@@ -73,14 +73,13 @@ Flutterアプリの `loadData()/saveData()` はこのAPIを利用するように
 
 その後「接続テスト」で疎通確認し、保存してください。
 
-注意: 現在DBは `backend/inventory.db` (SQLiteローカルファイル) なので、単一インスタンス前提です。
-複数台・高可用性が必要なら PostgreSQL などの外部DBへ移行してください。
+現在は PostgreSQL専用構成です。SQLiteは使用しません。
 
 ### Renderで公開URLを発行する手順（このリポジトリ対応済み）
 
 このリポジトリには以下を追加済みです。
 
-- `render.yaml`（Web Service + 永続ディスク設定）
+- `render.yaml`（Web Service設定）
 - `backend/Dockerfile`
 - `backend/.dockerignore`
 - `backend/.env.example`
@@ -90,6 +89,7 @@ Flutterアプリの `loadData()/saveData()` はこのAPIを利用するように
 1. GitHubにこのリポジトリをpush
 2. Renderで「Blueprint」作成時にリポジトリを選択（`render.yaml` を自動認識）
 3. 環境変数を設定
+	- `DATABASE_URL`（必須）
 	- `API_KEY`（推奨）
 	- `CORS_ALLOWED_ORIGINS`（Flutter Webを使う場合は公開元URLを指定）
 4. デプロイ完了後、`https://<your-service>.onrender.com/health` が `{"status":"ok"}` を返すことを確認
@@ -98,7 +98,48 @@ Flutterアプリの `loadData()/saveData()` はこのAPIを利用するように
 	- `API Key（任意）` に `API_KEY` を入力
 	- 「接続テスト」→「保存」
 
-補足:
+補足: 初回のみJSONシードを使いたい場合は `MASTER_DATA_PATH` と `INVENTORY_ENTRIES_PATH` を設定できます。
 
-- `DB_PATH` は `render.yaml` で `/data/inventory.db` に設定済み（永続ディスク）
-- 初回のみJSONシードを使いたい場合は `MASTER_DATA_PATH` と `INVENTORY_ENTRIES_PATH` を設定
+### 無料で最後まで進める手順（Neon + Render）
+
+以下は「カード登録なしで始めやすい」構成です（各サービスの無料枠や仕様は将来変更される可能性があります）。
+
+1. Neon で PostgreSQL を作成
+	- `https://neon.tech` にログイン
+	- 新規プロジェクト作成
+	- Connection String（`postgres://...`）をコピー
+	- URL末尾に `?sslmode=require` があることを確認
+
+2. GitHub にこのリポジトリを push
+
+3. Render で Blueprint デプロイ
+	- `New +` → `Blueprint`
+	- このリポジトリを選択して作成
+
+4. Render の環境変数を設定
+	- `DATABASE_URL` = Neon の接続文字列
+	- `API_KEY` = 任意（公開運用なら設定推奨）
+	- `CORS_ALLOWED_ORIGINS` = Web公開元URL（Flutter Webを使う場合）
+
+5. Render のURLで疎通確認
+	- `https://<your-service>.onrender.com/health`
+	- `{"status":"ok"}` が返ればOK
+
+6. Flutterアプリ側の設定
+	- メニュー > 設定
+	- `API Base URL` に Render のURL
+	- `API Key` は Render の `API_KEY` と同じ値（設定した場合）
+	- `接続テスト` → `保存`
+
+7. 動作確認（保存確認）
+	- アイテム追加 / 在庫登録を1件実行
+	- アプリ再起動後にもデータが残ることを確認
+
+### トラブル時チェック
+
+- `401 Unauthorized`
+  - Flutter側の `API Key` と Render の `API_KEY` が不一致
+- `500` / 起動失敗
+  - `DATABASE_URL` が未設定、または接続文字列不正
+- 接続テスト失敗
+  - URL末尾に余計なパスがないか（例: `/health` を付けない）

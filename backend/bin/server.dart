@@ -10,17 +10,18 @@ Future<void> main(List<String> args) async {
   final appConfig = AppConfig.fromEnvironment();
   final database = DatabaseService(
     workspaceRoot: appConfig.workspaceRoot,
-    dbPath: appConfig.dbPath,
+    databaseUrl: appConfig.databaseUrl,
     masterDataPath: appConfig.masterDataPath,
     inventoryEntriesPath: appConfig.inventoryEntriesPath,
-  )..initialize();
+  );
+  await database.initialize();
 
   final router = Router()
     ..get('/health', (Request request) {
       return _jsonResponse({'status': 'ok'});
     })
-    ..get('/items', (Request request) {
-      final items = database.getItems();
+    ..get('/items', (Request request) async {
+      final items = await database.getItems();
       return _jsonResponse({'items': items});
     })
     ..post('/items', (Request request) async {
@@ -33,20 +34,20 @@ Future<void> main(List<String> args) async {
           return _jsonResponse({'error': 'name は必須です'}, statusCode: 400);
         }
 
-        final item = database.createItem(name);
+        final item = await database.createItem(name);
         return _jsonResponse({'item': item}, statusCode: 201);
       } catch (e) {
         return _jsonResponse({'error': '不正なリクエストです: $e'}, statusCode: 400);
       }
     })
-    ..get('/entries', (Request request) {
+    ..get('/entries', (Request request) async {
       final itemIdParam = request.url.queryParameters['itemId'];
       final itemId = itemIdParam != null ? int.tryParse(itemIdParam) : null;
       if (itemIdParam != null && itemId == null) {
         return _jsonResponse({'error': 'itemId は整数で指定してください'}, statusCode: 400);
       }
 
-      final entries = database.getEntries(itemId: itemId);
+      final entries = await database.getEntries(itemId: itemId);
       return _jsonResponse({'entries': entries});
     })
     ..post('/entries', (Request request) async {
@@ -71,7 +72,7 @@ Future<void> main(List<String> args) async {
         final remarks = json['remarks'] as String?;
         final date = json['date'] as String?;
 
-        final entry = database.createEntry(
+        final entry = await database.createEntry(
           itemId: itemId,
           quantity: quantity,
           remarks: remarks,
@@ -84,8 +85,8 @@ Future<void> main(List<String> args) async {
         return _jsonResponse({'error': '不正なリクエストです: $e'}, statusCode: 400);
       }
     })
-    ..get('/aggregate', (Request request) {
-      final rows = database.aggregateStock();
+    ..get('/aggregate', (Request request) async {
+      final rows = await database.aggregateStock();
       return _jsonResponse({'rows': rows});
     })
     ..post('/sync', (Request request) async {
@@ -95,7 +96,7 @@ Future<void> main(List<String> args) async {
         final items = (json['masterItems'] as List?) ?? const [];
         final entries = (json['inventoryEntries'] as List?) ?? const [];
 
-        database.replaceAllData(items: items, entries: entries);
+        await database.replaceAllData(items: items, entries: entries);
         return _jsonResponse({'status': 'ok'});
       } catch (e) {
         return _jsonResponse({'error': '不正なリクエストです: $e'}, statusCode: 400);
@@ -108,10 +109,10 @@ Future<void> main(List<String> args) async {
       .addMiddleware(_apiKeyAuthMiddleware(appConfig))
       .addHandler(router.call);
 
-    final server = await shelf_io.serve(handler, appConfig.host, appConfig.port);
-    print('Inventory API running at http://${server.address.host}:${server.port}');
-    print('CORS allow origins: ${appConfig.allowedOrigins.isEmpty ? 'ALL(*)' : appConfig.allowedOrigins.join(', ')}');
-    print('API key auth: ${appConfig.apiKey == null || appConfig.apiKey!.isEmpty ? 'DISABLED' : 'ENABLED'}');
+  final server = await shelf_io.serve(handler, appConfig.host, appConfig.port);
+  print('Inventory API running at http://${server.address.host}:${server.port}');
+  print('CORS allow origins: ${appConfig.allowedOrigins.isEmpty ? 'ALL(*)' : appConfig.allowedOrigins.join(', ')}');
+  print('API key auth: ${appConfig.apiKey == null || appConfig.apiKey!.isEmpty ? 'DISABLED' : 'ENABLED'}');
 
   ProcessSignal.sigint.watch().listen((_) {
     database.dispose();
@@ -133,7 +134,7 @@ class AppConfig {
   final String? apiKey;
   final Set<String> allowedOrigins;
   final String workspaceRoot;
-  final String? dbPath;
+  final String databaseUrl;
   final String? masterDataPath;
   final String? inventoryEntriesPath;
 
@@ -143,7 +144,7 @@ class AppConfig {
     required this.apiKey,
     required this.allowedOrigins,
     required this.workspaceRoot,
-    required this.dbPath,
+    required this.databaseUrl,
     required this.masterDataPath,
     required this.inventoryEntriesPath,
   });
@@ -154,12 +155,16 @@ class AppConfig {
     final hostText = env['HOST'] ?? '0.0.0.0';
     final apiKey = env['API_KEY']?.trim();
     final corsRaw = env['CORS_ALLOWED_ORIGINS']?.trim() ?? '';
+    final databaseUrl = env['DATABASE_URL']?.trim();
     final workspaceRoot = (env['WORKSPACE_ROOT']?.trim().isNotEmpty ?? false)
       ? env['WORKSPACE_ROOT']!.trim()
       : Directory.current.parent.path;
-    final dbPath = env['DB_PATH']?.trim();
     final masterDataPath = env['MASTER_DATA_PATH']?.trim();
     final inventoryEntriesPath = env['INVENTORY_ENTRIES_PATH']?.trim();
+
+    if (databaseUrl == null || databaseUrl.isEmpty) {
+      throw StateError('DATABASE_URL is required (PostgreSQL only mode).');
+    }
 
     final origins = corsRaw.isEmpty
         ? <String>{}
@@ -175,7 +180,7 @@ class AppConfig {
       apiKey: (apiKey == null || apiKey.isEmpty) ? null : apiKey,
       allowedOrigins: origins,
       workspaceRoot: workspaceRoot,
-      dbPath: (dbPath == null || dbPath.isEmpty) ? null : dbPath,
+        databaseUrl: databaseUrl,
       masterDataPath: (masterDataPath == null || masterDataPath.isEmpty) ? null : masterDataPath,
       inventoryEntriesPath: (inventoryEntriesPath == null || inventoryEntriesPath.isEmpty)
           ? null

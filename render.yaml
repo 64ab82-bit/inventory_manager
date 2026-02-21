@@ -10,13 +10,9 @@ services:
         value: 0.0.0.0
       - key: PORT
         value: 8080
-      - key: DB_PATH
-        value: /data/inventory.db
+      - key: DATABASE_URL
+        sync: false
       - key: CORS_ALLOWED_ORIGINS
         sync: false
       - key: API_KEY
         sync: false
-    disk:
-      name: inventory-data
-      mountPath: /data
-      sizeGB: 1

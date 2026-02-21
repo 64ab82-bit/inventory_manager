@@ -14,9 +14,6 @@ COPY --from=build /app /app
 
 ENV HOST=0.0.0.0
 ENV PORT=8080
-ENV DB_PATH=/data/inventory.db
-
-RUN mkdir -p /data
 EXPOSE 8080
 
 CMD ["dart", "run", "bin/server.dart"]
