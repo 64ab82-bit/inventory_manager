@@ -1,13 +1,10 @@
 // JSON形式のデータを扱うためのライブラリ
+import 'dart:async';
 import 'dart:convert';
 // Flutterの基盤機能（debugPrint等）を使うためのライブラリ
 import 'package:flutter/foundation.dart';
-// アプリに含まれるファイル（assets）を読み込むためのライブラリ
-import 'package:flutter/services.dart';
 // デバイスのローカルストレージにデータを保存するためのライブラリ
 import 'package:shared_preferences/shared_preferences.dart';
-// CSVファイルを読み書きするためのライブラリ
-import 'package:csv/csv.dart';
 // GitHub APIを使うためのライブラリ（github という名前で参照）
 import 'package:github/github.dart' as github;
 // HTTP通信を行うためのライブラリ（http という名前で参照）
@@ -61,6 +58,10 @@ List<InventoryEntry> inventoryEntries = [];
 // 次に作成するアイテムのID（重複を避けるためにカウントアップする）
 int _nextItemId = 1;
 
+// APIの接続先URL（必要ならSharedPreferencesで上書き）
+String _apiBaseUrl = 'http://127.0.0.1:8080';
+String _apiKey = '';
+
 // ==== GitHub API 認証情報 ====
 // GitHub Personal Access Token（認証用のトークン）
 String? _githubToken;
@@ -68,8 +69,6 @@ String? _githubToken;
 String? _githubUser;
 // GitHubリポジトリ名
 String? _githubRepo;
-// GitHubクライアント（APIを呼び出すためのオブジェクト）
-github.GitHub? _githubClient;
 
 // GitHub設定を保存する関数
 Future<void> setGitHubConfig(String token, String user, String repo) async {
@@ -77,9 +76,6 @@ Future<void> setGitHubConfig(String token, String user, String repo) async {
   _githubToken = token;
   _githubUser = user;
   _githubRepo = repo;
-  // トークンを使ってGitHubクライアントを作成
-  _githubClient = github.GitHub(auth: github.Authentication.withToken(token));
-
   // デバイスのローカルストレージにも保存（次回起動時に読み込むため）
   final prefs = await SharedPreferences.getInstance();
   await prefs.setString('github_token', token);
@@ -94,15 +90,108 @@ Future<void> initializeGitHubConfig() async {
   _githubToken = prefs.getString('github_token');
   _githubUser = prefs.getString('github_user');
   _githubRepo = prefs.getString('github_repo');
+  _apiBaseUrl = prefs.getString('api_base_url') ?? _apiBaseUrl;
+  _apiKey = prefs.getString('api_key') ?? '';
 
-  // トークンが保存されていれば、GitHubクライアントを作成
-  if (_githubToken != null) {
-    _githubClient = github.GitHub(auth: github.Authentication.withToken(_githubToken));
-  }
 }
 
 // GitHub設定が完了しているか確認する関数
 bool isGitHubConfigured() => _githubToken != null && _githubUser != null && _githubRepo != null;
+
+// APIの接続先URLを保存する関数
+Future<void> setApiBaseUrl(String baseUrl) async {
+  _apiBaseUrl = baseUrl.trim();
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('api_base_url', _apiBaseUrl);
+}
+
+Future<void> setApiKey(String apiKey) async {
+  _apiKey = apiKey.trim();
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString('api_key', _apiKey);
+}
+
+String getApiBaseUrl() => _apiBaseUrl;
+String getApiKey() => _apiKey;
+
+Map<String, String> _apiHeaders({bool includeJsonContentType = false}) {
+  final headers = <String, String>{};
+  if (includeJsonContentType) {
+    headers['Content-Type'] = 'application/json';
+  }
+  if (_apiKey.isNotEmpty) {
+    headers['X-Api-Key'] = _apiKey;
+  }
+  return headers;
+}
+
+class ApiConnectionTestResult {
+  final bool ok;
+  final String message;
+
+  ApiConnectionTestResult({required this.ok, required this.message});
+}
+
+Future<ApiConnectionTestResult> testApiConnection(String baseUrl, {String? apiKey}) async {
+  final normalizedBaseUrl = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
+  final uri = Uri.tryParse('$normalizedBaseUrl/health');
+
+  if (normalizedBaseUrl.isEmpty || uri == null || (uri.scheme != 'http' && uri.scheme != 'https') || uri.host.isEmpty) {
+    return ApiConnectionTestResult(
+      ok: false,
+      message: 'URL形式が不正です（例: http://127.0.0.1:8080）',
+    );
+  }
+
+  try {
+    final headers = <String, String>{};
+    final key = (apiKey ?? _apiKey).trim();
+    if (key.isNotEmpty) {
+      headers['X-Api-Key'] = key;
+    }
+
+    final response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 3));
+    if (response.statusCode != 200) {
+      return ApiConnectionTestResult(
+        ok: false,
+        message: '接続失敗: HTTP ${response.statusCode}',
+      );
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body['status'] != 'ok') {
+      return ApiConnectionTestResult(
+        ok: false,
+        message: '接続失敗: /health の応答形式が想定外です',
+      );
+    }
+
+    return ApiConnectionTestResult(
+      ok: true,
+      message: '接続テスト成功: APIに到達できました',
+    );
+  } on TimeoutException {
+    return ApiConnectionTestResult(
+      ok: false,
+      message: '接続失敗: タイムアウトしました（3秒）',
+    );
+  } on FormatException {
+    return ApiConnectionTestResult(
+      ok: false,
+      message: '接続失敗: レスポンスJSONの解析に失敗しました',
+    );
+  } on http.ClientException catch (e) {
+    return ApiConnectionTestResult(
+      ok: false,
+      message: '接続失敗: ${e.message}',
+    );
+  } catch (e) {
+    return ApiConnectionTestResult(
+      ok: false,
+      message: '接続失敗: $e',
+    );
+  }
+}
 
 // 指定したGitHubユーザーのリポジトリ一覧を取得する関数
 Future<List<String>> fetchUserRepositories(String token, String username) async {
@@ -132,257 +221,76 @@ String? getGitHubLoadError() => _gitHubLoadError;
 void clearGitHubLoadError() => _gitHubLoadError = null;
 
 // ==== データ読み込み関数 ====
-// マスタデータと在庫データをGitHubまたはローカルから読み込む
+// マスタデータと在庫データをAPIから読み込む
 Future<void> loadData() async {
-  // GitHub設定を初期化（ローカルストレージから読み込む）
   await initializeGitHubConfig();
-  // エラーメッセージをクリア
   _gitHubLoadError = null;
 
   try {
-    // GitHub設定が完了している場合
-    if (isGitHubConfigured() && _githubClient != null) {
-      // GitHubから読み込む
-      // リポジトリを特定するための情報（ユーザー名/リポジトリ名）
-      final repoSlug = github.RepositorySlug(_githubUser!, _githubRepo!);
-      
-      try {
-        // ==== マスタデータを読み込み ====
-        // GitHubから master_data.json ファイルの内容を取得
-        final masterFile = await _githubClient!.repositories.getContents(repoSlug, 'master_data.json');
-        if (masterFile.file != null) {
-          // ファイルの内容はBase64でエンコードされているので、改行を削除
-          final encodedContent = (masterFile.file!.content ?? '').replaceAll('\n', '').replaceAll('\r', '');
-          // Base64でデコードしてバイト列に変換
-          final decodedBytes = base64Decode(encodedContent);
-          // バイト列をUTF-8文字列に変換
-          final jsonString = utf8.decode(decodedBytes);
-          // JSON文字列をデータ構造に変換
-          final data = jsonDecode(jsonString);
-          
-          // マスタアイテムのリストを取得
-          final items = data['masterItems'] as List?;
-          if (items != null) {
-            // 各アイテムをItemオブジェクトに変換して保存
-            masterItems = items.map((item) => Item.fromJson(item)).toList();
-          }
-          // 設定情報（次のIDなど）を取得
-          final config = data['config'] as Map?;
-          if (config != null) {
-            _nextItemId = config['nextItemId'] ?? 1;
-          }
-          debugPrint('📖 [loadData] マスタ読み込み完了: ${masterItems.length}件');
-        }
-
-        // ==== 在庫データを読み込み ====
-        // GitHubから inventory_entries.json ファイルの内容を取得
-        final inventoryFile = await _githubClient!.repositories.getContents(repoSlug, 'inventory_entries.json');
-        if (inventoryFile.file != null) {
-          // ファイルの内容をデコード（マスタと同様の手順）
-          final encodedContent = (inventoryFile.file!.content ?? '').replaceAll('\n', '').replaceAll('\r', '');
-          final decodedBytes = base64Decode(encodedContent);
-          final jsonString = utf8.decode(decodedBytes);
-          final data = jsonDecode(jsonString);
-          
-          // 在庫履歴のリストを取得
-          final entries = data['inventoryEntries'] as List?;
-          if (entries != null) {
-            // 各履歴をInventoryEntryオブジェクトに変換して保存
-            inventoryEntries = entries.map((entry) => InventoryEntry.fromJson(entry)).toList();
-          }
-          debugPrint('📖 [loadData] 在庫読み込み完了: ${inventoryEntries.length}件');
-        }
-        return;  // GitHubからの読み込みが成功したので終了
-      } catch (e) {
-        // GitHub読み込みエラーをメッセージに保存
-        final errorMsg = 'GitHub読み込みエラー: $e';
-        _gitHubLoadError = errorMsg;
-        rethrow;  // エラーを上位に伝える
-      }
+    final itemsResponse = await http.get(
+      Uri.parse('$_apiBaseUrl/items'),
+      headers: _apiHeaders(),
+    );
+    if (itemsResponse.statusCode != 200) {
+      throw Exception('items取得失敗: ${itemsResponse.statusCode}');
     }
+
+    final entriesResponse = await http.get(
+      Uri.parse('$_apiBaseUrl/entries'),
+      headers: _apiHeaders(),
+    );
+    if (entriesResponse.statusCode != 200) {
+      throw Exception('entries取得失敗: ${entriesResponse.statusCode}');
+    }
+
+    final itemsJson = jsonDecode(itemsResponse.body) as Map<String, dynamic>;
+    final entriesJson = jsonDecode(entriesResponse.body) as Map<String, dynamic>;
+
+    final items = (itemsJson['items'] as List?) ?? const [];
+    final entries = (entriesJson['entries'] as List?) ?? const [];
+
+    masterItems = items
+        .map((item) => Item.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    inventoryEntries = entries
+        .map((entry) => InventoryEntry.fromJson(Map<String, dynamic>.from(entry as Map)))
+        .toList();
+
+    if (masterItems.isEmpty) {
+      _nextItemId = 1;
+    } else {
+      final maxId = masterItems.map((e) => e.id).reduce((a, b) => a > b ? a : b);
+      _nextItemId = maxId + 1;
+    }
+
+    debugPrint('📖 [loadData] API読み込み完了 - マスタ: ${masterItems.length}件, 在庫: ${inventoryEntries.length}件');
   } catch (e) {
-    // GitHub読み込みエラーは無視してローカルにフォールバック
-  }
-
-  // ==== ローカルストレージから読み込み ====
-  // GitHub設定がない場合、ローカルデータを使用
-  try {
-    // SharedPreferencesを取得（デバイス内のデータ保存場所）
-    final prefs = await SharedPreferences.getInstance();
-    // 保存済みのJSONデータを読み込む
-    String? jsonString = prefs.getString('app_data_json');
-
-    if (jsonString == null) {
-      // 保存データがない場合は、初期データをCSVファイルから読み込む
-      final csvString = await rootBundle.loadString('assets/data.csv');
-      // CSVをJSON形式に変換
-      jsonString = _csvToJson(csvString);
-    }
-
-    // JSONデータをパースしてメモリに展開
-    _parseJSON(jsonString);
-  } catch (e) {
-    // ローカル読み込みエラー（エラー処理不要）
-  }
-}
-
-// CSVデータをJSON形式に変換する関数
-String _csvToJson(String csvString) {
-  // CSVデータを行ごとに分割してリスト化
-  final csvData = const CsvToListConverter().convert(csvString);
-
-  // マスタアイテムと在庫履歴を格納するリスト
-  final items = <Map<String, dynamic>>[];
-  final entries = <Map<String, dynamic>>[];
-  int nextId = 1;
-
-  // CSVの各行を処理
-  for (var row in csvData) {
-    if (row[0] == 'master' && row.length >= 3) {
-      // 'master'で始まる行はマスタアイテム
-      items.add({'id': int.parse(row[1]), 'name': row[2]});
-    } else if (row[0] == 'inventory' && row.length >= 5) {
-      // 'inventory'で始まる行は在庫履歴
-      entries.add({
-        'date': row[1],
-        'itemId': int.parse(row[2]),
-        'itemName': row[3],
-        'quantity': int.parse(row[4]),
-      });
-    } else if (row[0] == 'config' && row[1] == 'nextItemId' && row.length >= 3) {
-      // 'config'行は設定情報（次のIDなど）
-      nextId = int.parse(row[2]);
-    }
-  }
-
-  // 集めたデータをJSON形式に変換して返す
-  return jsonEncode({
-    'masterItems': items,
-    'inventoryEntries': entries,
-    'config': {'nextItemId': nextId},
-  });
-}
-
-// JSON文字列をパースしてメモリ上のデータに展開する関数
-void _parseJSON(String jsonString) {
-  debugPrint('📖 [_parseJSON] JSON解析開始');
-  // JSON文字列をデータ構造に変換
-  final data = jsonDecode(jsonString);
-
-  // 既存のデータをクリア
-  masterItems.clear();
-  inventoryEntries.clear();
-
-  // マスタアイテムを読み込む
-  final items = data['masterItems'] as List?;
-  if (items != null) {
-    // 各アイテムをItemオブジェクトに変換
-    masterItems = items.map((item) => Item.fromJson(item)).toList();
-  }
-
-  // 在庫履歴を読み込む
-  final entries = data['inventoryEntries'] as List?;
-  if (entries != null) {
-    // 各履歴をInventoryEntryオブジェクトに変換
-    inventoryEntries = entries.map((entry) => InventoryEntry.fromJson(entry)).toList();
-  }
-
-  debugPrint('📖 [_parseJSON] 解析完了 - マスタ件数: ${masterItems.length}, 在庫件数: ${inventoryEntries.length}');
-
-  // 設定情報を読み込む
-  final config = data['config'] as Map?;
-  if (config != null) {
-    _nextItemId = config['nextItemId'] ?? 1;  // 次のIDを取得（なければ1をデフォルトに）
+    _gitHubLoadError = 'API読み込みエラー: $e';
+    debugPrint(_gitHubLoadError);
+    masterItems = [];
+    inventoryEntries = [];
+    _nextItemId = 1;
   }
 }
 
 // ==== データ保存関数 ====
-// マスタデータと在庫データをGitHubとローカルに保存
+// マスタデータと在庫データをAPIに同期
 Future<void> saveData() async {
   debugPrint('💾 [saveData] マスタ件数: ${masterItems.length}, 在庫件数: ${inventoryEntries.length}');
 
-  // ==== GitHubに保存 ====
-  if (isGitHubConfigured() && _githubClient != null) {
-    try {
-      // リポジトリ情報を作成
-      final repoSlug = github.RepositorySlug(_githubUser!, _githubRepo!);
-
-      // マスタデータを保存
-      final masterData = {
-        'masterItems': masterItems.map((item) => item.toJson()).toList(),
-        'config': {'nextItemId': _nextItemId},
-      };
-      // データをJSON文字列に変換
-      final masterJsonString = jsonEncode(masterData);
-      // GitHubに master_data.json として保存
-      await _saveToGitHub(repoSlug, 'master_data.json', masterJsonString, 'Update master data');
-      debugPrint('💾 [saveData] マスタ保存完了');
-
-      // 在庫データを保存
-      final inventoryData = {
-        'inventoryEntries': inventoryEntries.map((entry) => entry.toJson()).toList(),
-      };
-      // データをJSON文字列に変換
-      final inventoryJsonString = jsonEncode(inventoryData);
-      // GitHubに inventory_entries.json として保存
-      await _saveToGitHub(repoSlug, 'inventory_entries.json', inventoryJsonString, 'Update inventory entries');
-      debugPrint('💾 [saveData] 在庫保存完了');
-    } catch (e) {
-      debugPrint('GitHub save error: $e');
-    }
-  }
-
-  // ==== ローカルストレージにも保存 ====
-  // (互換性のため統合形式で保存)
-  final jsonData = {
+  final payload = {
     'masterItems': masterItems.map((item) => item.toJson()).toList(),
     'inventoryEntries': inventoryEntries.map((entry) => entry.toJson()).toList(),
     'config': {'nextItemId': _nextItemId},
   };
-  // データをJSON文字列に変換
-  final jsonString = jsonEncode(jsonData);
-  // SharedPreferencesに保存
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setString('app_data_json', jsonString);
-}
 
-// GitHubにファイルを保存する共通関数
-Future<void> _saveToGitHub(github.RepositorySlug repoSlug, String filePath, String content, String message) async {
-  final url = Uri.parse(
-    'https://api.github.com/repos/$_githubUser/$_githubRepo/contents/$filePath',
+  final response = await http.post(
+    Uri.parse('$_apiBaseUrl/sync'),
+    headers: _apiHeaders(includeJsonContentType: true),
+    body: jsonEncode(payload),
   );
 
-  // 既存ファイルの情報を取得
-  String? sha;
-  try {
-    final existingFile = await _githubClient!.repositories.getContents(repoSlug, filePath);
-    if (existingFile.file != null) {
-      sha = existingFile.file!.sha;
-    }
-  } catch (e) {
-    // ファイルが存在しない場合は新規作成
-  }
-
-  final body = {
-    'message': message,
-    'content': base64Encode(utf8.encode(content)).toString(),
-  };
-
-  if (sha != null) {
-    body['sha'] = sha;
-  }
-  
-  final response = await http.put(
-    url,
-    headers: {
-      'Authorization': 'token $_githubToken',
-      'Content-Type': 'application/json',
-    },
-    body: jsonEncode(body),
-  );
-
-  if (response.statusCode != 201 && response.statusCode != 200) {
-    debugPrint('GitHub save failed for $filePath: ${response.statusCode} - ${response.body}');
-    throw Exception('Failed to save $filePath');
+  if (response.statusCode != 200) {
+    throw Exception('API保存失敗: ${response.statusCode} ${response.body}');
   }
 }

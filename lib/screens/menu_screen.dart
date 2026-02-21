@@ -13,217 +13,157 @@ class MenuScreen extends StatefulWidget {
 }
 
 class _MenuScreenState extends State<MenuScreen> {
-  final TextEditingController _tokenController = TextEditingController();
-  final TextEditingController _userController = TextEditingController();
-  String? _selectedRepo;
-  List<String> _availableRepos = [];
-  bool _loadingRepos = false;
+  final TextEditingController _apiBaseUrlController = TextEditingController();
+  final TextEditingController _apiKeyController = TextEditingController();
+  bool _testingConnection = false;
 
   @override
   void initState() {
     super.initState();
-    _checkGitHubSetup();
+    _initializeSettings();
   }
 
   @override
   void dispose() {
-    _tokenController.dispose();
-    _userController.dispose();
+    _apiBaseUrlController.dispose();
+    _apiKeyController.dispose();
     super.dispose();
   }
 
-  void _checkGitHubSetup() {
-    if (!isGitHubConfigured()) {
+  Future<void> _initializeSettings() async {
+    await initializeGitHubConfig();
+    _apiBaseUrlController.text = getApiBaseUrl();
+    _apiKeyController.text = getApiKey();
+
+    final errorMsg = getGitHubLoadError();
+    if (errorMsg != null && mounted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('GitHubの接続先設定が未完了です。'),
-            duration: Duration(seconds: 3),
-          ),
+          SnackBar(content: Text(errorMsg)),
         );
       });
-    } else {
-      // GitHub設定がある場合、読み込みエラーを確認
-      final errorMsg = getGitHubLoadError();
-      if (errorMsg != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('⚠️ GitHub読み込みエラー'),
-              content: Text(errorMsg),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('閉じる'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    clearGitHubLoadError();
-                    Navigator.pop(context);
-                    _showGitHubSetup();
-                  },
-                  child: const Text('設定を変更'),
-                ),
-              ],
-            ),
-          );
-        });
-      }
     }
   }
 
-  void _showGitHubSetup() {
-    _selectedRepo = null;
-    _availableRepos = [];
-    bool obscureToken = true;
-    
+  void _showApiSetup() {
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('データ取得設定'),
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('API接続設定'),
           content: SizedBox(
             width: double.maxFinite,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('GitHub APIの認証情報を入力してください', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const Text('バックエンドAPIのURLを入力してください', style: TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 16),
-                  
-                  // トークン入力（ペースト対応 + 表示/非表示）
+
                   TextField(
-                    controller: _tokenController,
-                    obscureText: obscureToken,
+                    controller: _apiBaseUrlController,
                     onChanged: (_) => setDialogState(() {}),
                     decoration: InputDecoration(
-                      labelText: 'Personal Access Token',
-                      hintText: 'ghp_で始まる文字列',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: Icon(obscureToken ? Icons.visibility : Icons.visibility_off),
-                            tooltip: obscureToken ? '表示' : '非表示',
-                            onPressed: () {
-                              setDialogState(() => obscureToken = !obscureToken);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.paste),
-                            tooltip: 'クリップボードから貼り付け',
-                            onPressed: () async {
-                              final clipboardData = await Clipboard.getData('text/plain');
-                              if (clipboardData != null && clipboardData.text != null) {
-                                _tokenController.text = clipboardData.text!;
-                                setDialogState(() {});
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('トークンを貼り付けました'), duration: Duration(milliseconds: 500)),
-                                );
-                              }
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  
-                  // ユーザー名入力（ペースト対応）
-                  TextField(
-                    controller: _userController,
-                    onChanged: (_) => setDialogState(() {}),
-                    textInputAction: TextInputAction.done,
-                    decoration: InputDecoration(
-                      labelText: 'GitHubユーザー名',
-                      hintText: 'あなたのユーザー名',
+                      labelText: 'API Base URL',
+                      hintText: 'http://127.0.0.1:8080',
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.paste),
                         tooltip: 'クリップボードから貼り付け',
                         onPressed: () async {
                           final clipboardData = await Clipboard.getData('text/plain');
+                          if (!mounted) return;
                           if (clipboardData != null && clipboardData.text != null) {
-                            _userController.text = clipboardData.text!;
+                            _apiBaseUrlController.text = clipboardData.text!;
                             setDialogState(() {});
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('ユーザー名を貼り付けました'), duration: Duration(milliseconds: 500)),
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(content: Text('URLを貼り付けました'), duration: Duration(milliseconds: 500)),
                             );
                           }
                         },
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  
-                  // リポジトリ取得ボタン
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      icon: _loadingRepos ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
-                      label: const Text('リポジトリを読み込み'),
-                      onPressed: (_tokenController.text.isEmpty || _userController.text.isEmpty || _loadingRepos)
-                        ? null
-                        : () async {
-                          setDialogState(() => _loadingRepos = true);
-                          _availableRepos = await fetchUserRepositories(_tokenController.text, _userController.text);
-                          _selectedRepo = null;
-                          setDialogState(() => _loadingRepos = false);
-                          
-                          if (_availableRepos.isEmpty) {
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('リポジトリが見つかりません')),
-                              );
-                            }
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _apiKeyController,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: InputDecoration(
+                      labelText: 'API Key（任意）',
+                      hintText: 'サーバーでAPI_KEY設定時のみ入力',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.paste),
+                        tooltip: 'クリップボードから貼り付け',
+                        onPressed: () async {
+                          final clipboardData = await Clipboard.getData('text/plain');
+                          if (!mounted) return;
+                          if (clipboardData != null && clipboardData.text != null) {
+                            _apiKeyController.text = clipboardData.text!;
+                            setDialogState(() {});
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(content: Text('APIキーを貼り付けました'), duration: Duration(milliseconds: 500)),
+                            );
                           }
                         },
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
-                  
-                  // リポジトリプルダウン
-                  if (_availableRepos.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      decoration: const InputDecoration(
-                        labelText: 'リポジトリ名',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: _availableRepos.map((repo) => DropdownMenuItem(value: repo, child: Text(repo))).toList(),
-                      onChanged: (value) => setDialogState(() => _selectedRepo = value),
-                      initialValue: _selectedRepo,
-                    )
-                  else if (_loadingRepos)
-                    const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: CircularProgressIndicator(),
-                    )
-                  else
-                    const Text('上のボタンをタップしてリポジトリを読み込んでください', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: (_apiBaseUrlController.text.trim().isEmpty || _testingConnection)
+                          ? null
+                          : () async {
+                              setDialogState(() => _testingConnection = true);
+                              final result = await testApiConnection(
+                                _apiBaseUrlController.text,
+                                apiKey: _apiKeyController.text,
+                              );
+                              if (!mounted) return;
+                              setDialogState(() => _testingConnection = false);
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(result.message),
+                                ),
+                              );
+                            },
+                      icon: _testingConnection
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.wifi_tethering),
+                      label: const Text('接続テスト'),
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('キャンセル')),
             ElevatedButton(
-              onPressed: (_tokenController.text.isEmpty || _userController.text.isEmpty || _selectedRepo == null)
+              onPressed: _apiBaseUrlController.text.trim().isEmpty
                 ? null
                 : () async {
-                  await setGitHubConfig(
-                    _tokenController.text,
-                    _userController.text,
-                    _selectedRepo!,
-                  );
-                  await loadData();
-                  _tokenController.clear();
-                  _userController.clear();
-                  _selectedRepo = null;
-                  if (mounted) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('GitHub設定完了！')));
+                  try {
+                    await setApiBaseUrl(_apiBaseUrlController.text);
+                    await setApiKey(_apiKeyController.text);
+                    await loadData();
+                    clearGitHubLoadError();
+                    if (!mounted) return;
+                    Navigator.of(this.context).pop();
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(content: Text('API設定を保存しました')),
+                    );
+                  } catch (_) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(content: Text('API接続に失敗しました。URLとサーバー起動を確認してください。')),
+                    );
                   }
                 },
               child: const Text('保存'),
@@ -331,7 +271,7 @@ class _MenuScreenState extends State<MenuScreen> {
                         elevation: 4,
                         child: InkWell(
                           borderRadius: BorderRadius.circular(12),
-                          onTap: _showGitHubSetup,
+                          onTap: _showApiSetup,
                           child: Padding(
                             padding: const EdgeInsets.all(12.0),
                             child: Column(
@@ -342,7 +282,7 @@ class _MenuScreenState extends State<MenuScreen> {
                                 const SizedBox(height: 6),
                                 const Text('設定', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                                 const SizedBox(height: 2),
-                                const Text('認証情報を登録', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                const Text('API接続先を登録', style: TextStyle(fontSize: 11, color: Colors.grey)),
                               ],
                             ),
                           ),

@@ -1,0 +1,13 @@
+name: inventory_manager_api
+description: API server for inventory_manager
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+  sqlite3: ^2.7.7
+  path: ^1.9.1
