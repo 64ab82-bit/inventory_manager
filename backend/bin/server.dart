@@ -10,7 +10,11 @@ Future<void> main(List<String> args) async {
   final appConfig = AppConfig.fromEnvironment();
   final database = DatabaseService(
     workspaceRoot: appConfig.workspaceRoot,
-    databaseUrl: appConfig.databaseUrl,
+    host: appConfig.mssqlHost,
+    port: appConfig.mssqlPort,
+    databaseName: appConfig.mssqlDatabase,
+    username: appConfig.mssqlUser,
+    password: appConfig.mssqlPassword,
     masterDataPath: appConfig.masterDataPath,
     inventoryEntriesPath: appConfig.inventoryEntriesPath,
   );
@@ -134,7 +138,11 @@ class AppConfig {
   final String? apiKey;
   final Set<String> allowedOrigins;
   final String workspaceRoot;
-  final String databaseUrl;
+  final String mssqlHost;
+  final String mssqlPort;
+  final String mssqlDatabase;
+  final String mssqlUser;
+  final String mssqlPassword;
   final String? masterDataPath;
   final String? inventoryEntriesPath;
 
@@ -144,7 +152,11 @@ class AppConfig {
     required this.apiKey,
     required this.allowedOrigins,
     required this.workspaceRoot,
-    required this.databaseUrl,
+    required this.mssqlHost,
+    required this.mssqlPort,
+    required this.mssqlDatabase,
+    required this.mssqlUser,
+    required this.mssqlPassword,
     required this.masterDataPath,
     required this.inventoryEntriesPath,
   });
@@ -155,15 +167,21 @@ class AppConfig {
     final hostText = env['HOST'] ?? '0.0.0.0';
     final apiKey = env['API_KEY']?.trim();
     final corsRaw = env['CORS_ALLOWED_ORIGINS']?.trim() ?? '';
-    final databaseUrl = env['DATABASE_URL']?.trim();
+    final mssqlHost = env['MSSQL_HOST']?.trim() ?? '';
+    final mssqlPort = env['MSSQL_PORT']?.trim().isNotEmpty == true
+      ? env['MSSQL_PORT']!.trim()
+      : '1433';
+    final mssqlDatabase = env['MSSQL_DATABASE']?.trim() ?? '';
+    final mssqlUser = env['MSSQL_USER']?.trim() ?? '';
+    final mssqlPassword = env['MSSQL_PASSWORD']?.trim() ?? '';
     final workspaceRoot = (env['WORKSPACE_ROOT']?.trim().isNotEmpty ?? false)
       ? env['WORKSPACE_ROOT']!.trim()
       : Directory.current.parent.path;
     final masterDataPath = env['MASTER_DATA_PATH']?.trim();
     final inventoryEntriesPath = env['INVENTORY_ENTRIES_PATH']?.trim();
 
-    if (databaseUrl == null || databaseUrl.isEmpty) {
-      throw StateError('DATABASE_URL is required (PostgreSQL only mode).');
+    if (mssqlHost.isEmpty || mssqlDatabase.isEmpty || mssqlUser.isEmpty || mssqlPassword.isEmpty) {
+      throw StateError('MSSQL_HOST / MSSQL_DATABASE / MSSQL_USER / MSSQL_PASSWORD are required.');
     }
 
     final origins = corsRaw.isEmpty
@@ -180,7 +198,11 @@ class AppConfig {
       apiKey: (apiKey == null || apiKey.isEmpty) ? null : apiKey,
       allowedOrigins: origins,
       workspaceRoot: workspaceRoot,
-        databaseUrl: databaseUrl,
+      mssqlHost: mssqlHost,
+      mssqlPort: mssqlPort,
+      mssqlDatabase: mssqlDatabase,
+      mssqlUser: mssqlUser,
+      mssqlPassword: mssqlPassword,
       masterDataPath: (masterDataPath == null || masterDataPath.isEmpty) ? null : masterDataPath,
       inventoryEntriesPath: (inventoryEntriesPath == null || inventoryEntriesPath.isEmpty)
           ? null

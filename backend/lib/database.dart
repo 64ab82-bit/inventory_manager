@@ -2,60 +2,63 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:postgres/postgres.dart';
+import 'package:mssql_connection/mssql_connection.dart';
 
 class DatabaseService {
   DatabaseService({
     required this.workspaceRoot,
-    required this.databaseUrl,
+    required this.host,
+    required this.port,
+    required this.databaseName,
+    required this.username,
+    required this.password,
     String? masterDataPath,
     String? inventoryEntriesPath,
   })  : _masterDataPathOverride = masterDataPath,
         _inventoryEntriesPathOverride = inventoryEntriesPath;
 
   final String workspaceRoot;
-  final String databaseUrl;
+  final String host;
+  final String port;
+  final String databaseName;
+  final String username;
+  final String password;
   final String? _masterDataPathOverride;
   final String? _inventoryEntriesPathOverride;
-  PostgreSQLConnection? _postgres;
+  final MssqlConnection _mssql = MssqlConnection.getInstance();
 
   String get _masterDataPath => _masterDataPathOverride ?? p.join(workspaceRoot, 'master_data.json');
   String get _inventoryEntriesPath =>
       _inventoryEntriesPathOverride ?? p.join(workspaceRoot, 'inventory_entries.json');
 
   Future<void> initialize() async {
-    await _initializePostgres();
+    await _initializeMssql();
     await _seedFromJsonIfEmpty();
   }
 
-  Future<void> _initializePostgres() async {
-    final uri = Uri.parse(databaseUrl);
-    final userInfo = uri.userInfo.split(':');
-    final username = userInfo.isNotEmpty ? Uri.decodeComponent(userInfo[0]) : '';
-    final password = userInfo.length > 1 ? Uri.decodeComponent(userInfo.sublist(1).join(':')) : '';
-    final databaseName = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : 'postgres';
-    final sslMode = (uri.queryParameters['sslmode'] ?? '').toLowerCase();
-    final useSSL = sslMode == 'require';
-
-    _postgres = PostgreSQLConnection(
-      uri.host,
-      uri.hasPort ? uri.port : 5432,
-      databaseName,
+  Future<void> _initializeMssql() async {
+    final connected = await _mssql.connect(
+      ip: host,
+      port: port,
+      databaseName: databaseName,
       username: username,
       password: password,
-      useSSL: useSSL,
+      timeoutInSeconds: 15,
     );
-    await _postgres!.open();
 
-    await _postgres!.execute('''
+    if (!connected) {
+      throw StateError('MSSQL接続に失敗しました: $host:$port / DB=$databaseName');
+    }
+
+    await _executeWrite('''
       CREATE TABLE IF NOT EXISTS items (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL
       );
     ''');
-    await _postgres!.execute('''
+    await _executeWrite('''
       CREATE TABLE IF NOT EXISTS inventory_entries (
-        id SERIAL PRIMARY KEY,
+        id INT IDENTITY(1,1) PRIMARY KEY,
         date TEXT NOT NULL,
         item_id INTEGER NOT NULL REFERENCES items(id),
         item_name TEXT NOT NULL,
@@ -66,20 +69,26 @@ class DatabaseService {
   }
 
   Future<void> dispose() async {
-    await _postgres?.close();
+    await _mssql.disconnect();
   }
 
   Future<List<Map<String, Object?>>> getItems() async {
-    final result = await _postgres!.query('SELECT id, name FROM items ORDER BY id');
-    return result.map((row) => {'id': row[0], 'name': row[1]}).toList();
+    final rows = await _executeRead('SELECT id, name FROM items ORDER BY id');
+    return rows
+        .map(
+          (row) => {
+            'id': _asInt(_pick(row, ['id', 'ID'])),
+            'name': '${_pick(row, ['name', 'NAME'])}',
+          },
+        )
+        .toList();
   }
 
   Future<Map<String, Object?>> createItem(String name) async {
-    final row = await _postgres!.query('SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM items');
-    final id = _asInt(row.first[0]);
-    await _postgres!.query(
-      'INSERT INTO items (id, name) VALUES (@id, @name)',
-      substitutionValues: {'id': id, 'name': name},
+    final row = await _executeRead('SELECT ISNULL(MAX(id), 0) + 1 AS next_id FROM items');
+    final id = _asInt(_pick(row.first, ['next_id', 'NEXT_ID']));
+    await _executeWrite(
+      "INSERT INTO items (id, name) VALUES ($id, N'${_escapeSql(name)}')",
     );
 
     return {'id': id, 'name': name};
@@ -89,27 +98,22 @@ class DatabaseService {
     final query = StringBuffer(
       'SELECT id, date, item_id, item_name, quantity, remarks FROM inventory_entries',
     );
-    final pgParams = <String, Object?>{};
 
     if (itemId != null) {
-      query.write(' WHERE item_id = @itemId');
-      pgParams['itemId'] = itemId;
+      query.write(' WHERE item_id = $itemId');
     }
     query.write(' ORDER BY date DESC, id DESC');
 
-    final result = await _postgres!.query(
-      query.toString(),
-      substitutionValues: pgParams.isEmpty ? null : pgParams,
-    );
-    return result
+    final rows = await _executeRead(query.toString());
+    return rows
         .map(
           (row) => {
-            'id': row[0],
-            'date': row[1],
-            'itemId': row[2],
-            'itemName': row[3],
-            'quantity': row[4],
-            'remarks': row[5],
+            'id': _asInt(_pick(row, ['id', 'ID'])),
+            'date': '${_pick(row, ['date', 'DATE'])}',
+            'itemId': _asInt(_pick(row, ['item_id', 'ITEM_ID'])),
+            'itemName': '${_pick(row, ['item_name', 'ITEM_NAME'])}',
+            'quantity': _asInt(_pick(row, ['quantity', 'QUANTITY'])),
+            'remarks': _pick(row, ['remarks', 'REMARKS']),
           },
         )
         .toList();
@@ -127,21 +131,12 @@ class DatabaseService {
     }
 
     final entryDate = date ?? DateTime.now().toIso8601String();
-    final inserted = await _postgres!.query(
-      '''
-      INSERT INTO inventory_entries (date, item_id, item_name, quantity, remarks)
-      VALUES (@date, @itemId, @itemName, @quantity, @remarks)
-      RETURNING id
-      ''',
-      substitutionValues: {
-        'date': entryDate,
-        'itemId': itemId,
-        'itemName': itemName,
-        'quantity': quantity,
-        'remarks': remarks,
-      },
+    final remarksSql = remarks == null ? 'NULL' : "N'${_escapeSql(remarks)}'";
+    await _executeWrite(
+      "INSERT INTO inventory_entries ([date], item_id, item_name, quantity, remarks) VALUES (N'${_escapeSql(entryDate)}', $itemId, N'${_escapeSql(itemName)}', $quantity, $remarksSql)",
     );
-    final insertedId = _asInt(inserted.first[0]);
+    final insertedRows = await _executeRead('SELECT TOP 1 id FROM inventory_entries ORDER BY id DESC');
+    final insertedId = _asInt(_pick(insertedRows.first, ['id', 'ID']));
 
     return {
       'id': insertedId,
@@ -154,14 +149,11 @@ class DatabaseService {
   }
 
   Future<String?> _getItemName(int itemId) async {
-    final itemRow = await _postgres!.query(
-      'SELECT name FROM items WHERE id = @itemId',
-      substitutionValues: {'itemId': itemId},
-    );
+    final itemRow = await _executeRead('SELECT name FROM items WHERE id = $itemId');
     if (itemRow.isEmpty) {
       return null;
     }
-    return itemRow.first[0] as String;
+    return '${_pick(itemRow.first, ['name', 'NAME'])}';
   }
 
   Future<List<Map<String, Object?>>> aggregateStock() async {
@@ -172,13 +164,13 @@ class DatabaseService {
       ORDER BY item_id
     ''';
 
-    final result = await _postgres!.query(aggregateSql);
-    return result
+    final rows = await _executeRead(aggregateSql);
+    return rows
         .map(
           (row) => {
-            'itemId': row[0],
-            'itemName': row[1],
-            'totalQuantity': row[2],
+            'itemId': _asInt(_pick(row, ['itemId', 'ITEMID'])),
+            'itemName': '${_pick(row, ['itemName', 'ITEMNAME'])}',
+            'totalQuantity': _asInt(_pick(row, ['totalQuantity', 'TOTALQUANTITY'])),
           },
         )
         .toList();
@@ -188,40 +180,39 @@ class DatabaseService {
     required List<dynamic> items,
     required List<dynamic> entries,
   }) async {
-    await _postgres!.transaction((ctx) async {
-      await ctx.execute('DELETE FROM inventory_entries');
-      await ctx.execute('DELETE FROM items');
+    await _executeWrite('BEGIN TRANSACTION');
+    try {
+      await _executeWrite('DELETE FROM inventory_entries');
+      await _executeWrite('DELETE FROM items');
 
       for (final item in items) {
         final map = Map<String, dynamic>.from(item as Map);
-        await ctx.query(
-          'INSERT INTO items (id, name) VALUES (@id, @name)',
-          substitutionValues: {'id': map['id'], 'name': map['name']},
+        await _executeWrite(
+          "INSERT INTO items (id, name) VALUES (${map['id']}, N'${_escapeSql('${map['name']}')}')",
         );
       }
 
       for (final entry in entries) {
         final map = Map<String, dynamic>.from(entry as Map);
-        await ctx.query(
-          '''
-          INSERT INTO inventory_entries (date, item_id, item_name, quantity, remarks)
-          VALUES (@date, @itemId, @itemName, @quantity, @remarks)
-          ''',
-          substitutionValues: {
-            'date': map['date'],
-            'itemId': map['itemId'],
-            'itemName': map['itemName'],
-            'quantity': map['quantity'],
-            'remarks': map['remarks'],
-          },
+        final remarks = map['remarks'];
+        final remarksSql = remarks == null ? 'NULL' : "N'${_escapeSql('$remarks')}'";
+        await _executeWrite(
+          "INSERT INTO inventory_entries ([date], item_id, item_name, quantity, remarks) VALUES (N'${_escapeSql('${map['date']}')}', ${map['itemId']}, N'${_escapeSql('${map['itemName']}')}', ${map['quantity']}, $remarksSql)",
         );
       }
-    });
+
+      await _executeWrite('COMMIT TRANSACTION');
+    } catch (_) {
+      await _executeWrite('ROLLBACK TRANSACTION');
+      rethrow;
+    }
   }
 
   Future<void> _seedFromJsonIfEmpty() async {
-    final itemCount = _asInt((await _postgres!.query('SELECT COUNT(*) FROM items')).first[0]);
-    final entryCount = _asInt((await _postgres!.query('SELECT COUNT(*) FROM inventory_entries')).first[0]);
+    final itemCountRows = await _executeRead('SELECT COUNT(*) AS count FROM items');
+    final entryCountRows = await _executeRead('SELECT COUNT(*) AS count FROM inventory_entries');
+    final itemCount = _asInt(_pick(itemCountRows.first, ['count', 'COUNT']));
+    final entryCount = _asInt(_pick(entryCountRows.first, ['count', 'COUNT']));
 
     if (itemCount > 0 || entryCount > 0) {
       return;
@@ -245,13 +236,35 @@ class DatabaseService {
     await replaceAllData(items: masterItems, entries: inventoryEntries);
   }
 
+  Future<List<Map<String, dynamic>>> _executeRead(String query) async {
+    final raw = await _mssql.getData(query);
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+    final rows = (decoded['rows'] as List?) ?? const [];
+    return rows
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+  }
+
+  Future<void> _executeWrite(String query) async {
+    await _mssql.writeData(query);
+  }
+
+  Object? _pick(Map<String, dynamic> row, List<String> keys) {
+    for (final key in keys) {
+      if (row.containsKey(key)) {
+        return row[key];
+      }
+    }
+    return null;
+  }
+
   int _asInt(Object? value) {
     if (value is int) {
       return value;
     }
-    if (value is BigInt) {
-      return value.toInt();
-    }
+    if (value == null) return 0;
     return int.parse('$value');
   }
+
+  String _escapeSql(String value) => value.replaceAll("'", "''");
 }

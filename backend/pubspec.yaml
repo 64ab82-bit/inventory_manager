@@ -7,7 +7,7 @@ environment:
   sdk: ^3.9.0
 
 dependencies:
+  mssql_connection: ^3.0.0
   shelf: ^1.4.2
   shelf_router: ^1.1.4
-  postgres: ^2.6.4
   path: ^1.9.1
